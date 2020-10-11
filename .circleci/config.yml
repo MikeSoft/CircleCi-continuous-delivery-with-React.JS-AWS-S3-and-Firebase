@@ -22,18 +22,25 @@ jobs:
           paths:
             - ./node_modules
 
+      - run:
+          name: "Set host variable"
+          command: if [[ $CIRCLE_BRANCH == "master" ]]; then PUBLIC_URL=$PROD_URL; else PUBLIC_URL=$STAGING_URL; fi;echo $PUBLIC_URL
+
       - run: yarn build
+
       - persist_to_workspace:
           root: .
           paths:
-            - public
+            - build
+            - firebase.json
+            - .firebaserc
+
   deploy_staging:
     docker:
       - image: circleci/golang:1.15
     parallelism: 1
     working_directory: ~/react-application
     steps:
-      - checkout
       - attach_workspace:
           at: ~/react-application
       - restore_cache:
@@ -47,7 +54,7 @@ jobs:
       - run:
           name: Deploy to S3
           command: |
-            s3deploy -source=public/ -region=$AWS_REGION -key=$AWS_ACCESS_KEY_ID -secret=$AWS_SECRET_ACCESS_KEY -bucket=$BUCKET_NAME
+            s3deploy -source=build/ -region=$AWS_REGION -key=$AWS_ACCESS_KEY_ID -secret=$AWS_SECRET_ACCESS_KEY -bucket=$BUCKET_NAME
 
   deploy_firebase:
     docker:
@@ -55,18 +62,10 @@ jobs:
     parallelism: 1
     working_directory: ~/react-application
     steps:
-      - checkout
-      - restore_cache:
-          keys:
-            - v1-dependencies-{{ checksum "package.json" }}
-            - v1-dependencies-
-
+      - attach_workspace:
+          at: ~/react-application
+      - run: dir
       - run: npm install firebase-tools
-
-      - save_cache:
-          key: v1-dependencies-{{ checksum "package.json" }}
-          paths:
-            - ./node_modules
       - run:
           command: ./node_modules/.bin/firebase deploy --token "$FIREBASE_TOKEN" --only hosting --non-interactive
 
