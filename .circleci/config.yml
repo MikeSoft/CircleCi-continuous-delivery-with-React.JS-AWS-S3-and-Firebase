@@ -1,0 +1,99 @@
+version: 2.1
+jobs:
+  build:
+    docker:
+      - image: circleci/node:9.2
+    parallelism: 1
+    working_directory: ~/react-application
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+
+      - attach_workspace:
+          at: ~/react-application
+
+      - run: yarn install --ignore-engines
+
+      - save_cache:
+          key: v1-dependencies-{{ checksum "package.json" }}
+          paths:
+            - ./node_modules
+
+      - run: yarn build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - public
+  deploy_staging:
+    docker:
+      - image: circleci/golang:1.15
+    parallelism: 1
+    working_directory: ~/react-application
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ~/react-application
+      - restore_cache:
+          key: v1-pkg-cache
+      - run: export GO111MODULE=on
+      - run: go get -u -v github.com/bep/s3deploy
+      - save_cache:
+          key: v1-pkg-cache
+          paths:
+            - /go/pkg
+      - run:
+          name: Deploy to S3
+          command: |
+            s3deploy -source=public/ -region=$AWS_REGION -key=$AWS_ACCESS_KEY_ID -secret=$AWS_SECRET_ACCESS_KEY -bucket=$BUCKET_NAME
+
+  deploy_firebase:
+    docker:
+      - image: circleci/node:10.16.0
+    parallelism: 1
+    working_directory: ~/react-application
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+
+      - run: npm install firebase-tools
+
+      - save_cache:
+          key: v1-dependencies-{{ checksum "package.json" }}
+          paths:
+            - ./node_modules
+      - run:
+          command: ./node_modules/.bin/firebase deploy --token "$FIREBASE_TOKEN" --only hosting --non-interactive
+
+workflows:
+  version: 2.1
+  build-and-deploy:
+    jobs:
+      - build:
+          filters:
+            branches:
+              only:
+                - develop
+                - staging
+                - master
+
+      - deploy_staging:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - staging
+
+      - deploy_firebase:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - master
